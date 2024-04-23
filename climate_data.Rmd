@@ -1,0 +1,309 @@
+---
+title: "HR_data"
+output: html_document
+date: "2024-03-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("ggcorrplot")
+library(ggplot2)
+library(ggcorrplot)
+library(tidyverse)
+library(dplyr)
+```
+
+
+```{r}
+#df <- read.table("ICOADS13_23.csv.gzip", sep=",", header=TRUE)
+df <- read_csv("df_climate.csv")
+head(df)
+#nrow(df)
+#sapply(df, function(x) sum(is.na(x)))
+
+```
+
+
+
+
+```{r}
+df <- df %>% 
+  select(date,STATION, LONGITUDE, LATITUDE, AIR_TEMP, SEA_SURF_TEMP,WAVE_HGT, WIND_DIR, WIND_SPEED)
+df$winddir <- cut(df$WIND_DIR, breaks=c(0,20,70,110,160,200,250,290,340,360), labels=c("N","NE","E", "SE", "S", "SW", "W", "NW", "N"))
+df$month <- format(as.Date(df$date), "%m")
+#add season column
+df$season <- ifelse(df$month %in% c('05','06','07'), "SUMMER",
+                    ifelse (df$month %in% c('08','09','10'), "FALL",
+                            ifelse (df$month %in% c('11','12','01'), 
+                                    "WINTER", "SPRING")))
+df$yr <- format(as.Date(df$date), "%Y")
+
+#write.csv(df, "climate.csv")
+```
+
+```{r}
+#1. Is there a relationship between air and sea surface temperature in the Chesapeake Bay region between 2013 and 2023? 
+#averages by year
+
+avg_at <- df %>% 
+  group_by(yr) %>% 
+  summarise(mean_at = mean(AIR_TEMP, na.rm = T))
+avg_at
+
+avg_sst <- df %>% 
+  group_by(yr) %>% 
+  summarise(mean_sst = mean(SEA_SURF_TEMP, na.rm = T))
+avg_sst
+
+avg_df <- avg_at %>% 
+  merge(avg_sst, by = "yr")
+avg_df
+
+#temp year averages plot
+ggplot(avg_df, aes(x=as.numeric(yr), y = mean_sst)) +
+  geom_line(aes(color = "Sea Surface Temp")) +
+  geom_line(aes(y = mean_at, color = "Air Temp"))+
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Temperature (F)", color = "") +
+  scale_color_manual(values = c("royalblue3", "orangered"))+
+  labs(title="Average Sea Surface Temp and Air Temp per Year")+
+  theme_minimal()
+
+
+```
+
+```{r}
+df$month_yr <- format(as.Date(df$date), "%Y-%m")
+head(df)
+
+#monthly averages
+avg_at_m <- df %>% 
+  group_by(month_yr) %>% 
+  summarise(mean_at = mean(AIR_TEMP, na.rm = T))
+avg_at_m
+
+avg_sst_m <- df %>% 
+  group_by(month_yr) %>% 
+  summarise(mean_sst = mean(SEA_SURF_TEMP, na.rm = T))
+avg_sst_m
+
+avg_df_m <- avg_at_m %>% 
+  merge(avg_sst_m, by = "month_yr")
+avg_df_m
+
+#percent difference month to month 
+mom_at <- avg_df_m %>% 
+  mutate(mom_per_change_at = (mean_at - lag(mean_at))/lag(mean_at),
+         mom_per_change_sst = (mean_sst - lag(mean_sst))/lag(mean_sst),
+         diff_per = mom_per_change_at-mom_per_change_sst )
+#percent difference year to year
+yoy_at <- avg_df %>% 
+  mutate(yoy_per_change_at = (mean_at - lag(mean_at))/lag(mean_at),
+         yoy_per_change_sst = (mean_sst - lag(mean_sst))/lag(mean_sst),
+         diff_per = yoy_per_change_at-yoy_per_change_sst) 
+yoy_t_cum <- yoy_at%>% 
+  replace(is.na(.), 0) %>% 
+  mutate(cum_change_at = cumsum(yoy_per_change_at),
+         cum_change_sst = cumsum(yoy_per_change_sst))
+
+#air temp plot with change
+ggplot(yoy_t_cum, aes(x=as.numeric(yr), y = mean_at)) +
+  geom_line(aes(color = "Air Temp")) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Air Temperature (F)", color = "") +
+  scale_color_manual(values = c("royalblue3"))+
+  labs(title="Air Temperature and Trend")+
+  geom_smooth(method = "lm")
+  theme_minimal()
+
+#sea surf temp plot with change
+ggplot(yoy_t_cum, aes(x=as.numeric(yr), y = mean_sst)) +
+  geom_line(aes(color = "Air Temp")) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Sea Surface Temperature (F)", color = "") +
+  scale_color_manual(values = c("orangered"))+
+  labs(title="Sea Surface Temperature and Trend")+
+  geom_smooth(method = "lm")
+  theme_minimal()
+
+#correlation of sea surf temp and air temp by year
+corr <- df %>% 
+  group_by(yr) %>% 
+  summarise(corr = cor(SEA_SURF_TEMP, AIR_TEMP, use = "complete.obs"))
+corr
+
+```
+
+
+```{r}
+#2. Is there a relationship between wind direction, wind speed and wave characteristics in the Chesapeake Bay region between 2013 and 2023?
+
+#plot of seasonal wind direction
+p <- ggplot(df, aes(x=winddir)) + 
+  geom_bar(stat="count")+
+  facet_wrap(~season)
+p
+
+#plot of yearly wind direction
+p <- ggplot(df, aes(x=winddir)) + 
+  geom_bar(stat="count", fill ="lightblue")+
+  facet_wrap(~yr)+
+  xlab("Wind Direction")+
+  ylab("Count")+
+  labs(title = "Wind Direction per Year")+
+  theme_minimal()
+p
+
+#plot of seasonal wind speed
+p <- ggplot(df, aes(x=WIND_SPEED)) + 
+  geom_histogram()+
+  facet_wrap(~season)
+p
+
+#plot of wind direction
+ggplot(df2, aes(x=winddir)) + 
+  geom_bar(stat = "count", fill="lightblue")+
+  xlab("Wind Direction")+
+  ylab("Count")+
+  labs(title = "Wind Direction")+
+  theme_minimal()
+
+
+#yearly wind speed average
+avg_ws <- df %>% 
+  group_by(yr) %>% 
+  summarise(mean_ws = mean(WIND_SPEED, na.rm = T))
+avg_ws
+
+ggplot(avg_ws, aes(x=as.numeric(yr), y = mean_ws)) +
+  geom_line(aes(color = "Wind Speed")) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Wind Speed (knts)", color = "") +
+  scale_color_manual(values = c("black"))+
+  labs(title="Average Wind Speed Per Year")+
+  theme_minimal()
+
+#ggplot of wave height per wind direction
+ggplot(df, aes(x=as.factor(winddir), y=WIND_SPEED)) + 
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("Wind Direction")+
+    ylab("Wind Speed")+
+    labs(title = "Wind Speed and Wind Direction")+
+    theme_minimal()
+
+#average wind direction changing?
+avg_wd <- df %>% 
+  group_by(yr) %>% 
+  summarise(mean_wd = mean(WIND_DIR, na.rm = T))
+avg_wd
+
+ggplot(avg_wd, aes(x=as.numeric(yr), y = mean_wd)) +
+  geom_line(aes(color = "Wind Direction")) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Wind Direction", color = "") +
+  scale_color_manual(values = c("black"))+
+  labs(title="Average Wind Direction Per Year")+
+  theme_minimal()
+
+```
+```{r}
+#wind rose
+#create wind bins
+df <- df %>% mutate(wind_bin = cut(WIND_SPEED, breaks=c(0, 10, 20, 30, 40, 50)))
+
+wind <- df %>% 
+  filter(!is.na(wind_bin)) %>% 
+  filter(!is.na(winddir))
+
+ggplot(wind, aes(winddir, fill = wind_bin)) +
+  geom_bar(width = 1) +
+  coord_polar(start = -pi/16)+
+  facet_wrap(~season)
+
+```
+
+```{r}
+#correlation
+df_numeric <- df %>% 
+  select(WAVE_HGT, WIND_SPEED, SEA_SURF_TEMP,AIR_TEMP)
+cor_all<-cor(df_numeric, use = "na.or.complete")
+ggcorrplot(cor_all)
+
+
+```
+
+```{r}
+#3. Are there seasonal or yearly differences in temperature, wind, wave, and present weather data in the Chesapeake Bay region between 2013 and 2023?
+
+# time plot of yearly wind speed, wind direction, wave height, air temp and sea surf temp
+# seasonal time plot of above
+
+avg_season <- df %>% 
+  group_by(yr, season) %>% 
+  summarise(avg_wind_speed = mean(WIND_SPEED, na.rm = T),
+            avg_wave_hight = mean(WAVE_HGT, na.rm = T),
+            avg_sst = mean(SEA_SURF_TEMP, na.rm = T),
+            avg_at = mean(AIR_TEMP, na.rm = T))
+
+ggplot(avg_season, aes(x=as.numeric(yr), y = avg_sst)) +
+  geom_line(aes(color = "Sea Surface Temp")) +
+  geom_line(aes(y = avg_at, color = "Air Temp"))+
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  labs(x = "Year", y = "Temperature (F)", color = "") +
+  scale_color_manual(values = c("royalblue3", "orangered"))+
+  labs(title="Average Sea Surface Temp and Air Temp per Season")+
+  theme_minimal()+
+  facet_wrap(~season)
+
+
+p <- ggplot(avg_season, aes(x=as.numeric(yr), y=avg_wind_speed, color=season)) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  geom_line() + 
+  labs(x = "Year", y = "Wind Speed", title = "Wind Speed per Season Per Year") +
+  theme_minimal()
+p
+
+```
+
+
+```{r}
+#from m1 2013 %change from m1 2014 ......
+change <- df %>% 
+  group_by(LATITUDE, LONGITUDE,yr) %>% 
+  summarise(mean_sst=mean(SEA_SURF_TEMP,na.rm = T)) %>% 
+  drop_na() %>% 
+  filter(yr=="2013"|yr=="2023")
+
+change2 <- change %>% 
+  group_by(LATITUDE, LONGITUDE) %>% 
+  mutate(yoy_per_change_sst = (mean_sst - lag(mean_sst))/lag(mean_sst)) %>% 
+  drop_na()
+
+changeair <- df %>% 
+  group_by(LATITUDE, LONGITUDE,yr) %>% 
+  summarise(mean_at=mean(AIR_TEMP,na.rm = T)) %>% 
+  drop_na() %>% 
+  filter(yr=="2013"|yr=="2023")
+
+changeair2 <- changeair %>% 
+  group_by(LATITUDE, LONGITUDE) %>% 
+  mutate(yoy_per_change_at = (mean_at - lag(mean_at))/lag(mean_at)) %>% 
+  drop_na()
+
+write.csv(changeair2,"airpercentchange.csv")
+write.csv(change2,"seapercentchange.csv")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
